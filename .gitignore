@@ -1,0 +1,8 @@
+/build
+/dist
+/hooks
+/icon
+/index_analysis.code-workspace
+/run_app.spec
+/test
+/WindPy.pth
