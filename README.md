@@ -4,6 +4,12 @@
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)
 ![Streamlit](https://img.shields.io/badge/streamlit-1.48.0-red.svg)
 
+## 版本更新
+
+### 版本1.1.0
+- 新增指数基金对比工具页面,可实现指数基金份额波动率、超额收益、跟踪误差任意两两组合绘制散点图分析功能，左侧表单可设定起止时间和分析的指数（虽然写的是八个指数，但是目前只能分析第一个，所以说请每次输入一个指数）
+- 增加dist文件下的readme.txt和WindPy.pth文件，可帮助解决配置问题
+
 ## 项目简介
 
 指数对比分析工具是一个基于Streamlit开发的金融数据分析应用程序，主要用于多指数对比分析。该工具提供了丰富的功能模块，帮助用户深入了解不同指数的特征、表现和成分股构成。
@@ -111,7 +117,9 @@ python run_app.py
 
 - **开发者**: Jeff_Chen
 - **联系邮箱**: Jeff_ChenWH@Outlook.com
-- **版本**: v1.0.0
+- **版本**: v1.1.0
+
+
 
 ## 许可证
 
