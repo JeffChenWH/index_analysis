@@ -12,7 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="指数对比分析工具", page_icon="📊")
+st.set_page_config(page_title="指数对比分析工具", page_icon="📊", layout="wide")
 
 # ————————————————————————————————————————————初始配置模块————————————————————————————————————————————
 # 全局时间配置：定义默认日期范围，默认起止日期为五年前和今天
@@ -97,6 +97,16 @@ zx_industry_colors = {
 def get_index_data(indexes):
     index_data = w.wsd(indexes, "close", f"{st.session_state.start_date}", f"{st.session_state.end_date}",usedf=True)[1]
     return index_data
+
+@st.cache_data
+def get_index_market_value(indexes):
+    index_market_value = w.wss(indexes, 
+        "mkt_cap_ard",
+        "unit=1",
+        f"tradeDate={st.session_state.end_date}",
+        usedf=True)[1]
+    index_market_value = index_market_value.map(lambda x: x/100000000)
+    return index_market_value
 
 # 缓存区间收益数据
 @st.cache_data
@@ -213,7 +223,7 @@ def get_risk_data(indexes, start_date=None, end_date=None):
         end_date = st.session_state.end_date
 
     risk_table = w.wss(indexes, 
-      "sec_name,pct_chg_per,turn_per,stdevry,sharpe,risk_calmar,risk_maxdownside2,risk_maxupside2",
+      "sec_name,pct_chg_per,turn_per,stdevry,sharpe,risk_calmar,risk_maxupside2,risk_maxdownside2,risk_maxdownside_date",
       f"startDate={start_date};",
       f"endDate={end_date};",
       "bondPriceType=2;",
@@ -222,18 +232,24 @@ def get_risk_data(indexes, start_date=None, end_date=None):
       usedf=True)[1]
 
     beta_table = pd.DataFrame()
-    for index in indexes:
-        beta_table[f'Beta/弹性（以{index}为基准）'] = w.wss(indexes, 
-        "beta",
-        f"startDate={start_date};endDate={end_date};period=2;returnType=1;index={index}",
-        usedf=True)[1]
+    # for index in indexes:
+    #     beta_table[f'Beta/弹性（以{index}为基准）'] = w.wss(indexes, 
+    #     "beta",
+    #     f"startDate={start_date};endDate={end_date};period=2;returnType=1;index={index}",
+    #     usedf=True)[1]
     
+    beta_table['Beta'] = w.wss(indexes, 
+        "beta",
+        f"startDate={start_date};endDate={end_date};period=2;returnType=1;index=881001.wi",
+        usedf=True)[1]
+
     risk_table = risk_table.rename(columns={
     'SEC_NAME':'指数名称',
     'PCT_CHG_PER':'区间涨跌幅',
     'TURN_PER':'区间换手率',
-    'RISK_MAXUPSIDE2':'锐度',
+    'RISK_MAXUPSIDE2':'最大上涨',
     'RISK_MAXDOWNSIDE2':'最大回撤',
+    'RISK_MAXDOWNSIDE_DATE':'最大回撤起止日期',
     'SHARPE':'区间年化夏普比率',
     'STDEVRY':'区间年化波动率',
     'RISK_CALMAR':'区间年化卡玛比率',
@@ -290,10 +306,10 @@ def get_earning_data(indexes):
     # 判断上一年度是否有年报,即所有数据是否都是NaN
     if last_year_return.isnull().all().all():
         # 获取年份时间序列，包括当年年份前五年和后三年
-        years = [int(last_year) - i for i in range(-5,4)]
+        years = [int(last_year) - i for i in range(-3,5)]
     else:
         # 上一年度年报出了，以当前年度为基准    
-        years = [int(curr_year) - i for i in range(-5,4)]
+        years = [int(curr_year) - i for i in range(-3,5)]
     years.sort()
 
     # 初始化两个数据帧用于存放收入和利润数据
@@ -337,7 +353,7 @@ def get_top20_concentration(_indexes):
 
     for index in _indexes:
         # 筛选出当前指数的成分股
-        index_components = component_data[component_data['指数代码'] == index].copy()
+        index_components = component_data[component_data['指数代码'] == index].copy().set_index('股票代码')
         # 按权重排序
         index_components = index_components.sort_values('权重', ascending=False)
         # 取前20大成分股
@@ -362,7 +378,7 @@ def get_tracking_funds(indexes):
             'fundcode':'基金代码',
             'fundname':'基金名称',
             'scale':'基金规模（亿元）',
-            'excessreturn':'过去一年超额收益',
+            'excessreturn':'过去一年超额收益（%）',
             'establishmentday':'基金成立日',
             'fundmanager':'基金经理',
             'company':'基金公司',
@@ -370,9 +386,18 @@ def get_tracking_funds(indexes):
             'managementrate':'管理费',
             'windavg':'Wind三年评级',
             'fundtype':'基金类型'}, inplace=True)
-        tracking_funds_data[index]['基金规模（亿元）'] = tracking_funds_data[index]['基金规模（亿元）'].apply(lambda x: format(x/100000000, '.2%'))
 
-        # 获取近三个月
+        # 健壮性检查：如果该指数没有对应的基金数据，跳过后续处理
+        if tracking_funds_data[index] is not None and not tracking_funds_data[index].empty:
+            tracking_funds_data[index].set_index('基金代码', inplace=True)
+            # 检查基金规模数据的存在性和格式转换
+            if '基金规模（亿元）' in tracking_funds_data[index].columns:
+                tracking_funds_data[index]['基金规模（亿元）'] = tracking_funds_data[index]['基金规模（亿元）'].apply(lambda x: x/100000000 if pd.notnull(x) else 0.0)
+        else:
+            # 如果没有基金数据，设置为None
+            tracking_funds_data[index] = None
+
+        # TODO: 获取近三个月基金走势信息并嵌入文件中
     return tracking_funds_data
 
 # ————————————————————————————————————————————提示信息————————————————————————————————————————————
@@ -549,6 +574,15 @@ def show_plot(indexes):
         )
 
         st.plotly_chart(fig)
+
+        st.download_button(
+            label="点击下载原始数据",
+            data=normalized_data.to_csv(index=True).encode('utf-8'),
+            file_name=f"index_return_{base_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            icon=":material/download:",
+        )
+
     
     with tabs[1]:
         # 确保索引（日期）是datetime类型
@@ -602,6 +636,14 @@ def show_plot(indexes):
         )
 
         st.plotly_chart(fig)
+
+        st.download_button(
+            label="点击下载原始数据",
+            data=wide_data.to_csv(index=True).encode('utf-8'),
+            file_name=f"index_close_{base_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            icon=":material/download:",
+        )
 
 # 显示指数估值图表
 def show_valuation_chart(indexes):
@@ -673,6 +715,14 @@ def show_valuation_chart(indexes):
                 
                 st.plotly_chart(fig1)
 
+                st.download_button(
+                    label="点击下载原始数据",
+                    data=selected_data.to_csv(index=True).encode('utf-8'),
+                    file_name=f"{name}_{selected_earning}.csv",
+                    mime="text/csv",
+                    icon=":material/download:",
+                )
+
             with col2:
                 selected_valuation = st.radio("选择数据", ['PE','PB'], key=f"valuation_{i}")
                 if selected_valuation == 'PE':
@@ -703,7 +753,8 @@ def show_valuation_chart(indexes):
                         y=[selected_percentile, selected_percentile],
                         name='分位数',
                         line=dict(color='red', dash='dash'),
-                        text=[f'{selected_valuation}分位数: {selected_percentile:.2f}']
+                        text=[f'{selected_valuation}分位数: {selected_percentile:.2f}'],
+                        yaxis="y2"
                     ),
                     secondary_y=True,
                 )
@@ -714,31 +765,41 @@ def show_valuation_chart(indexes):
                 fig2.update_yaxes(title_text="分位数", secondary_y=True)
                 
                 # 设置图表标题
-                fig2.update_layout(title_text=f'{name}近五年{selected_valuation}走势和分位数')
-                
+                fig2.update_layout(title_text=f'{name}近五年{selected_valuation}走势和分位数',
+                                   yaxis2={'range':[0,100]})
+
                 st.plotly_chart(fig2)
+
+                st.download_button(
+                    label="点击下载原始数据",
+                    data=selected_series.to_csv(index=True).encode('utf-8'),
+                    file_name=f"{name}_{selected_valuation}.csv",
+                    mime="text/csv",
+                    icon=":material/download:",
+                )
 
 # 显示指数风险收益特征表格
 def show_risk_table(index_codes):
     # 由用户在现有的指数中选定一个指数作为基准指数
     if len(index_codes) > 1:
         # 选择基准指数
-        selected_index = st.selectbox("选择基准指数", index_codes)
+        # selected_index = st.selectbox("选择基准指数", index_codes)
 
         # 使用侧边栏中选择的日期
         risk_table_precise, beta_table = get_risk_data(index_codes, st.session_state.start_date, st.session_state.end_date)
         
         # 确保要访问的列存在于beta_table中
-        beta_column_name = f'Beta/弹性（以{selected_index}为基准）'
-        if beta_column_name in beta_table.columns:
-            risk_table_precise = pd.concat([risk_table_precise, beta_table[beta_column_name]], axis=1)
-        else:
-            st.warning(f"未找到Beta列: {beta_column_name}")
-            # 可以选择使用第一列或其他默认列
-            if not beta_table.empty:
-                first_column = beta_table.columns[0]
-                risk_table_precise = pd.concat([risk_table_precise, beta_table[first_column]], axis=1)
-                st.info(f"使用默认Beta列: {first_column}")
+        # beta_column_name = f'Beta/弹性（以{selected_index}为基准）'
+        # if beta_column_name in beta_table.columns:
+        risk_table_precise = pd.concat([beta_table, risk_table_precise], axis=1)
+        risk_table_precise.set_index("指数名称", inplace=True)
+        # else:
+        #     st.warning(f"未找到Beta列: {beta_column_name}")
+        #     # 可以选择使用第一列或其他默认列
+        #     if not beta_table.empty:
+        #         first_column = beta_table.columns[0]
+        #         risk_table_precise = pd.concat([risk_table_precise, beta_table[first_column]], axis=1)
+        #         st.info(f"使用默认Beta列: {first_column}")
 
         # 确保DataFrame列类型与Arrow兼容
         for col in risk_table_precise.columns:
@@ -753,9 +814,9 @@ def show_risk_table(index_codes):
             styled_table = risk_table_precise.style.background_gradient(cmap='Oranges', subset=numeric_columns)
             # 分别设置数值列和非数值列的格式
             styled_table = styled_table.format({col: "{:.2f}" for col in numeric_columns})
-            st.dataframe(styled_table, use_container_width=True, hide_index=True)
+            st.dataframe(styled_table, use_container_width=True)
         else:
-            st.dataframe(risk_table_precise, use_container_width=True, hide_index=True)
+            st.dataframe(risk_table_precise, use_container_width=True)
 
     else:
         st.info("当前仅选择了一个指数，如需对比相对指数，请添加更多指数。")
@@ -778,8 +839,8 @@ def show_radar_graph(index_codes):
             st.session_state.end_date
         )
         
-        # 选择基准指数
-        selected_index = st.selectbox("选择基准指数（雷达图）", index_codes, key="radar_index")
+        # # 选择基准指数
+        # selected_index = st.selectbox("选择基准指数（雷达图）", index_codes, key="radar_index")
         
         # 准备雷达图数据
         # 初始化雷达图数据DataFrame
@@ -792,74 +853,66 @@ def show_radar_graph(index_codes):
         
         # 添加新的指标数据
         # 1. 锐度（从风险数据中获取）
-        radar_data["锐度"] = risk_table["锐度"]
+        radar_data["锐度"] = risk_table["最大上涨"]
         
         # 2. Beta/弹性（以基准指数为基准）
-        beta_column_name = f'Beta/弹性（以{selected_index}为基准）'
-        if beta_column_name in beta_table.columns:
-            radar_data["Beta/弹性（以基准指数为基准）"] = beta_table[beta_column_name]
-        else:
-            st.warning(f"未找到Beta列: {beta_column_name}，使用默认Beta列")
-            if not beta_table.empty:
-                first_column = beta_table.columns[0]
-                radar_data["Beta/弹性（以基准指数为基准）"] = beta_table[first_column]
-            else:
-                # 添加默认Beta列为1
-                radar_data["Beta/弹性（以基准指数为基准）"] = 1.0
+        radar_data["弹性"] = beta_table['Beta']
+        # beta_column_name = f'Beta/弹性（以{selected_index}为基准）'
+        # if beta_column_name in beta_table.columns:
+        #     radar_data["弹性"] = beta_table[beta_column_name]
+        # else:
+        #     st.warning(f"未找到Beta列: {beta_column_name}，使用默认Beta列")
+        #     if not beta_table.empty:
+        #         first_column = beta_table.columns[0]
+        #         radar_data["Beta/弹性（以基准指数为基准）"] = beta_table[first_column]
+        #     else:
+        #         # 添加默认Beta列为1
+        #         radar_data["Beta/弹性（以基准指数为基准）"] = 1.0
         
         # 3. 归母净利润同比增速
         # 获取归母净利润数据
         _, profit_data = get_earning_data(index_codes)
         # 计算最近年度的同比增速
-        radar_data["归母净利润同比增速"] = (profit_data.iloc[5] - profit_data.iloc[4]) / profit_data.iloc[4].abs() * 100
+        radar_data["成长"] = (profit_data.iloc[:, 4] - profit_data.iloc[:, 3]) / profit_data.iloc[:, 3].abs() * 100
         
-        # 4. 年内收益率
-        return_data = get_return_data(index_codes)
-        # 获取当前年份的收益率（最后一列）
-        current_year = return_data.columns[-1]
-        yearly_return_data = return_data[current_year]
-        radar_data["年内收益率"] = yearly_return_data
+        # # 4. 年内收益率
+        # return_data = get_return_data(index_codes)
+        # # 获取当前年份的收益率（最后一列）
+        # current_year = return_data.columns[-1]
+        # yearly_return_data = return_data[current_year]
+        # radar_data["年内收益率"] = yearly_return_data
         
+        # 4. 换手率（从风险数据中获取）
+        radar_data["流动性"] = risk_table["区间换手率"]
+
         # 5. 前20大成分股集中度
         concentration_data, __ = get_top20_concentration(index_codes)
-        radar_data["前20大成分股集中度"] = concentration_data
+        radar_data["集中度"] = concentration_data
         
         # 6. PE分位数
         pe_pb_percentile = get_PE_PB_percentile(index_codes)
-        radar_data["市盈率分位数"] = pe_pb_percentile["市盈率分位数"]
+        radar_data["价值"] = pe_pb_percentile["市盈率分位数"]
         
         # 7. 卡玛比率（从风险数据中获取）
-        radar_data["卡玛比率"] = risk_table["区间年化卡玛比率"]
+        radar_data["风险收益"] = risk_table["区间年化卡玛比率"]
         
+        # 8. 市值
+        radar_data["市值"] = get_index_market_value(index_codes)
+
         # 定义要展示的指标列表
-        all_metrics = ["锐度", "Beta/弹性（以基准指数为基准）", "归母净利润同比增速", "年内收益率", "前20大成分股集中度", "市盈率分位数", "卡玛比率"]
+        all_metrics = ["锐度", "弹性", "成长", "市值", "集中度", "价值", "风险收益", "流动性"]
         
         # 数据标准化处理，使用Sigmoid函数
         normalized_data = radar_data[all_metrics].copy()
         
         # 对每个指标进行Sigmoid标准化
         for metric in all_metrics:
-            if metric == "前20大成分股集中度":
-                # 集中度越接近50%越好，偏离50%越远得分越低
-                # 先转换为与50的偏差，然后进行Sigmoid标准化
-                deviation_from_50 = abs(normalized_data[metric] - 50)
-                # 对偏差取负值，使越接近50得分越高
-                normalized_values = -deviation_from_50
-                # 标准化到0-1区间
-                min_val = normalized_values.min()
-                max_val = normalized_values.max()
-                if max_val > min_val:
-                    normalized_values = (normalized_values - min_val) / (max_val - min_val)
-                else:
-                    normalized_values = pd.Series(0.5, index=normalized_values.index)
-                # 应用Sigmoid函数
-                normalized_data[metric] = sigmoid(normalized_values * 10 - 5) * 100  # 缩放以获得更好的区分度
-            # elif metric in ["Beta/弹性（以基准指数为基准）"]:
-            #     # Beta值越接近1越好，偏离1越远得分越低
-            #     # 先转换为与1的偏差，然后进行Sigmoid标准化
-            #     deviation_from_1 = abs(normalized_data[metric] - 1)
-            #     # 对偏差取负值，使越接近1得分越高
-            #     normalized_values = -deviation_from_1
+            # if metric == "前20大成分股集中度":
+            #     # 集中度越接近50%越好，偏离50%越远得分越低
+            #     # 先转换为与50的偏差，然后进行Sigmoid标准化
+            #     deviation_from_50 = abs(normalized_data[metric] - 50)
+            #     # 对偏差取负值，使越接近50得分越高
+            #     normalized_values = -deviation_from_50
             #     # 标准化到0-1区间
             #     min_val = normalized_values.min()
             #     max_val = normalized_values.max()
@@ -869,18 +922,33 @@ def show_radar_graph(index_codes):
             #         normalized_values = pd.Series(0.5, index=normalized_values.index)
             #     # 应用Sigmoid函数
             #     normalized_data[metric] = sigmoid(normalized_values * 10 - 5) * 100  # 缩放以获得更好的区分度
+            # # elif metric in ["Beta/弹性（以基准指数为基准）"]:
+            # #     # Beta值越接近1越好，偏离1越远得分越低
+            # #     # 先转换为与1的偏差，然后进行Sigmoid标准化
+            # #     deviation_from_1 = abs(normalized_data[metric] - 1)
+            # #     # 对偏差取负值，使越接近1得分越高
+            # #     normalized_values = -deviation_from_1
+            # #     # 标准化到0-1区间
+            # #     min_val = normalized_values.min()
+            # #     max_val = normalized_values.max()
+            # #     if max_val > min_val:
+            # #         normalized_values = (normalized_values - min_val) / (max_val - min_val)
+            # #     else:
+            # #         normalized_values = pd.Series(0.5, index=normalized_values.index)
+            # #     # 应用Sigmoid函数
+            # #     normalized_data[metric] = sigmoid(normalized_values * 10 - 5) * 100  # 缩放以获得更好的区分度
+            # else:
+            # 其他指标越大越好
+            # 标准化到0-1区间
+            metric_data = normalized_data[metric]
+            min_val = metric_data.min()
+            max_val = metric_data.max()
+            if max_val > min_val:
+                normalized_values = (metric_data - min_val) / (max_val - min_val)
             else:
-                # 其他指标越大越好
-                # 标准化到0-1区间
-                metric_data = normalized_data[metric]
-                min_val = metric_data.min()
-                max_val = metric_data.max()
-                if max_val > min_val:
-                    normalized_values = (metric_data - min_val) / (max_val - min_val)
-                else:
-                    normalized_values = pd.Series(0.5, index=metric_data.index)
-                # 应用Sigmoid函数
-                normalized_data[metric] = sigmoid(normalized_values * 10 - 5) * 100  # 缩放以获得更好的区分度
+                normalized_values = pd.Series(0.5, index=metric_data.index)
+            # 应用Sigmoid函数
+            normalized_data[metric] = sigmoid(normalized_values * 10 - 5) * 100  # 缩放以获得更好的区分度
         
         # 创建雷达图
         fig = go.Figure()
@@ -926,21 +994,19 @@ def show_radar_graph(index_codes):
         # 右侧解释说明
         st.markdown("### 雷达图指标说明")
         st.markdown("""
-        1. **锐度**：衡量收益率的稳定性，越大越好
-        2. **Beta/弹性**：衡量指数相对于基准指数的敏感度，越接近1越好
-        3. **归母净利润同比增速**：反映指数成分股整体盈利增长情况，越大越好
-        4. **年内收益率**：反映指数当年的收益表现，越大越好
-        5. **前20大成分股集中度**：反映指数前20大成分股的权重集中程度，越接近50%越好
-        6. **市盈率分位数**：反映指数当前估值水平，需结合市场环境判断，越大越好
-        7. **卡玛比率**：衡量单位回撤所能获得的收益，越大越好
+        1. **锐度**：即指数在区间内的**最大上涨**幅度，衡量指数的短期爆发力
+        2. **弹性**：衡量指数相对于基准指数（默认基准为万德全A）的敏感度**Beta**
+        3. **成长**：即指数**归母净利润同比增速**，反映指数成分股整体盈利增长情况
+        4. **市值**：反映指数规模大小
+        5. **集中度**：反映指数**前20大成分股的累积权重**集中程度
+        6. **价值**：即**指数市盈率分位数**，反映指数当前估值水平
+        7. **风险收益**：即**指数卡玛比率**，衡量单位回撤所能获得的收益
+        8. **流动性**：即**区间内指数换手率**，衡量指数成分股的流动性
         """)
         
         st.markdown("### 数据处理说明")
         st.markdown("""
         - 所有指标均已进行归一化处理，映射到0-100区间
-        - 对于Beta值，越接近1得分越高
-        - 对于前20大成分股集中度，越接近50%得分越高
-        - 其他指标越大越好
         - 得分越高表示该指标在所选指数中的相对表现越好
         """)
    
@@ -1532,22 +1598,31 @@ def show_tracking_funds(indexes):
     
     for i, (index_code, name) in enumerate(zip(index_info.index, index_info['指数名称'])):
         with tabs[i]:
-            # 获取当前指数的基金数据
+            # 获取当前指数的基金数据，检查是否存在有效数据
+            if tracking_funds_data[index_code] is None or tracking_funds_data[index_code].empty:
+                st.info(f"{name}({index_code})没有对应的基金产品")
+                continue
+                
             fund_df = tracking_funds_data[index_code].copy()
             
-            # 删除第一列（通常是索引列）
-            if not fund_df.empty:
-                fund_df = fund_df.iloc[:, 1:]
-            
             # 使用正则表达式筛选基金代码，只保留以OF、SZ、SH、HK结尾的基金
-            if '基金代码' in fund_df.columns:
-                fund_df = fund_df[fund_df['基金代码'].astype(str).str.match(r'.*\.(OF|SZ|SH|HK)$')]
+            fund_df = fund_df[fund_df.index.astype(str).str.match(r'.*\.(OF|SZ|SH|HK)$')]
             
-            # 只显示前30大基金
-            fund_df_top30 = fund_df.head(30)
+            # 只显示前50大基金
+            fund_df_top50 = fund_df.head(50)
             
             # 显示处理后的数据
-            st.dataframe(fund_df_top30, use_container_width=True)
+            st.dataframe(fund_df_top50.style.background_gradient(
+                        cmap='Oranges', 
+                        subset=['基金规模（亿元）', '过去一年超额收益（%）','单位净值', '管理费', 'Wind三年评级']
+                            ).format({
+                                '基金规模（亿元）': "{:.2f}",
+                                '过去一年超额收益（%）': "{:.2f}",
+                                '单位净值': "{:.4f}",
+                                '管理费': "{:.2f}",
+                                'Wind三年评级': "{:.0f}"
+                            }),
+                use_container_width=True)
             
             # 将原始数据储存在字典里备用
             data_dict[index_code] = fund_df
@@ -1564,7 +1639,11 @@ def show_tracking_funds(indexes):
             tabs = st.tabs([name for name in index_info['指数名称']])
             for i, (index_code, name) in enumerate(zip(index_info.index, index_info['指数名称'])):
                 with tabs[i]:
-                    st.dataframe(data_dict[index_code], use_container_width=True)
+                    if tracking_funds_data[index_code] is None or tracking_funds_data[index_code].empty:
+                        st.info(f"{name}({index_code})没有对应的基金产品")
+                        continue
+                    else:
+                        st.dataframe(data_dict[index_code], use_container_width=True)
 
 # ————————————————————————————————————————————主程序模块——————————————————————————————————————————————
 
@@ -1623,14 +1702,14 @@ def main(index_codes):
         st.subheader("指数年度收益对比")
         show_year_return(index_codes)
 
+        # 9.显示跟踪各指数的基金竞争格局
+        st.divider()
+        st.subheader("跟踪各指数的基金竞争格局（前50大公募基金）")
+        show_tracking_funds(index_codes)
+
         # 3.显示指数大类资产相关性热力图
         st.divider()
         st.altair_chart(show_assets_heatmap(index_codes), use_container_width=True)
-
-        # 9.显示跟踪各指数的基金竞争格局
-        st.divider()
-        st.subheader("跟踪各指数的基金竞争格局")
-        show_tracking_funds(index_codes)
 
         # 页面运行完毕关闭万德终端
         w.stop()

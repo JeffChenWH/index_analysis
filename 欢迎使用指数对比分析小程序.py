@@ -76,8 +76,8 @@ st.sidebar.markdown(
         <div class="sidebar-footer">
             由 <strong>Jeff_Chen</strong> 开发</br>
             联系邮箱：<a href="mailto:Jeff_ChenWH@Outlook.com">Jeff_ChenWH@Outlook.com</a></br>
-            应用程序版本下载：<a href="https://github.com/Jeff-ChenWH/index_analysis/releases/tag/v1.0.0">v1.0.0</a></br>
-            Github仓库：<a href="https://github.com/Jeff-ChenWH/index_analysis">https://github.com/Jeff-ChenWH/index_analysis</a></br>
+            应用程序版本<a href="https://pan.baidu.com/s/1Or6umdTQkmoaJD4wvJuesA?pwd=wgfn">下载</a></br>
+            <a href="https://github.com/JeffChenWH/index_analysis">Github仓库</a></br>
              <strong>版本 1.0.0</strong>
         </div>
     </div>
