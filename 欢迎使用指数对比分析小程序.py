@@ -78,7 +78,7 @@ st.sidebar.markdown(
             联系邮箱：<a href="mailto:Jeff_ChenWH@Outlook.com">Jeff_ChenWH@Outlook.com</a></br>
             应用程序版本<a href="https://pan.baidu.com/s/1Or6umdTQkmoaJD4wvJuesA?pwd=wgfn">下载</a></br>
             <a href="https://github.com/JeffChenWH/index_analysis">Github仓库</a></br>
-             <strong>版本 1.0.0</strong>
+             <strong>版本 1.1.0</strong>
         </div>
     </div>
     """,
